@@ -54,7 +54,101 @@ def clean_compressed_text(text):
     # 移除空行
     text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
     
+    # 消除中文字之间的空格
+    # 匹配中文字符之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 消除中文字符与标点符号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([，。！？；：""''（）【】])', r'\1\2', text)
+    text = re.sub(r'([，。！？；：""''（）【】])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 更全面的中文字符空格清理
+    # 清理中文字符与数字之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+(\d)', r'\1\2', text)
+    text = re.sub(r'(\d)\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与英文字母之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([a-zA-Z])', r'\1\2', text)
+    text = re.sub(r'([a-zA-Z])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与特殊符号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([#@$%^&*+=<>])', r'\1\2', text)
+    text = re.sub(r'([#@$%^&*+=<>])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与括号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([\(\)\[\]\{\}])', r'\1\2', text)
+    text = re.sub(r'([\(\)\[\]\{\}])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 多次应用，确保所有中文字符间的空格都被清理
+    for _ in range(3):
+        text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
     return text
+
+def smart_split_text(text, max_chars):
+    """
+    智能分段文本，在单词边界处截断，避免将单词分割
+    
+    Args:
+        text (str): 要分段的文本
+        max_chars (int): 每段最大字符数
+    
+    Returns:
+        list: 分段后的文本列表
+    """
+    if len(text) <= max_chars:
+        return [text]
+    
+    segments = []
+    start = 0
+    
+    while start < len(text):
+        # 计算当前段的结束位置
+        end = min(start + max_chars, len(text))
+        
+        # 如果这是最后一段，直接截取
+        if end == len(text):
+            segments.append(text[start:end])
+            break
+        
+        # 在最大长度范围内寻找最佳截断点
+        # 优先寻找句子结束符
+        sentence_endings = ['。', '！', '？', '.', '!', '?', '\n\n']
+        best_break = start + max_chars
+        
+        for ending in sentence_endings:
+            pos = text.rfind(ending, start, end)
+            if pos > start and pos < end:
+                best_break = pos + len(ending)
+                break
+        
+        # 如果没找到句子结束符，寻找空格或标点符号
+        if best_break == start + max_chars:
+            # 寻找空格
+            space_pos = text.rfind(' ', start, end)
+            if space_pos > start:
+                best_break = space_pos + 1
+            else:
+                # 寻找其他分隔符
+                separators = ['，', '；', '：', ',', ';', ':', '、']
+                for sep in separators:
+                    pos = text.rfind(sep, start, end)
+                    if pos > start and pos < end:
+                        best_break = pos + len(sep)
+                        break
+        
+        # 如果还是没找到合适的分隔点，就在最大长度处截断
+        if best_break == start + max_chars:
+            best_break = end
+        
+        # 添加当前段
+        segment = text[start:best_break].strip()
+        if segment:  # 确保段不为空
+            segments.append(segment)
+        
+        start = best_break
+    
+    return segments
 
 # 读取配置文件
 CONFIG_PATH = Path(__file__).parent / 'config.json'
@@ -148,25 +242,37 @@ def optimize_with_deepseek(prompt_text, api_key):
     Returns:
         str: 优化后的prompt文本
     """
-    # DeepSeek system prompt - 更明确的指令
-    system_prompt = '''你是一个专业的prompt优化专家，擅长将复杂的中文prompt转换为简洁高效的英文版本。
-你的任务是将用户提供的prompt转换为token数更少的英文版本，同时保持其核心功能和效果。
-**严格遵循以下规则：**
-1. **绝对不可翻译的部分**：
-   - 所有以"输出格式"、"格式"、"Format"开头的部分及其完整内容
-   - 任何JSON格式、代码块或特殊格式要求
-2. **优化策略**：
-   - 删除冗余的修饰词、重复表达
-   - 将长句拆分为简洁的短句
-   - 使用更直接的动词和名词
-   - 避免不必要的副词、介词、连词
-   - 保持逻辑清晰和指令明确
-3. **输出要求**：
-   - 直接输出优化后的英文prompt
-   - 不要添加任何解释或说明
-   - 确保输出格式部分完全保持原样（包括中文内容）
-   - 保持prompt的完整性和可执行性
-**质量检查**：确保优化后的prompt仍然能够准确传达原始意图，并且更容易被AI模型理解和执行。'''
+    # DeepSeek system prompt - 将「非关键部分」翻译为更短英文、关键片段保持原样
+    system_prompt = '''你是一名专业的 System Prompt 压缩与翻译专家。
+目标：在不改变语义与可执行性的前提下，将输入的中文 System Prompt 中「非关键部分」翻译为更短、更直接的英文，以降低token数；同时严格保留「关键部分」原样（语言、标点、结构均不可变）。
+
+必须原样保留（禁止翻译/改写/改动）：
+- 任何以「输出格式」「输出格式，非json」「请按如下JSON格式输出」「Format」开头的段落；
+- 这些段落内的所有括号、引号、字段名、枚举字面量、大小写与结构；
+- 明确的限制/约束/排除机制/注意事项中影响判定边界的条款；
+- “非json/JSON”之类的格式声明文本。
+
+允许翻译与压缩（需保持决策边界不变）：
+- 角色说明、技能/能力描述、背景解读、非必要冗余；
+- 冗长示例中的赘述（保留界定边界的关键信息即可）；
+- 合并近义与重复表述、改写为短句、使用更直接的动词名词；
+- 英文输出应简洁、指令化、条目化，避免情绪化或口语化。
+
+禁止事项：
+- 不得新增/删除字段、不得更名或更改枚举字面量；
+- 不得修改保留段落的任何字符（含中英文标点与空格位置）；
+- 不得改变“非json/JSON”声明与示例结构。
+
+判断准确率的标准：
+- 我会将处理后的System Prompt和原始的System Prompt在相同的User Prompt输入deepseek模型，对比输出结果，如果输出内容中某些字段（例如：level、isPerson、predictLevel、isduplicate）的值不一致，则判定为不准确；
+- 所以处理的结果应该尽量保证约束这些字段的条件不被压缩和省略，以此来保证准确率更高。
+
+输出要求：
+- 直接输出处理后的 System Prompt 全文；
+- 不添加解释、标题或前后缀；
+- 确保结果可直接作为模型的 System Prompt 使用；
+- 若某句无法安全压缩或翻译，会影响输出格式或判定边界，则保持该句原样中文不变。
+'''
 
     # 使用OpenAI SDK调用DeepSeek API
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/")
@@ -179,7 +285,7 @@ def optimize_with_deepseek(prompt_text, api_key):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text}
             ],
-            temperature=1.0,  # 降低温度以获得更稳定的结果
+            temperature=0.3,  # 降低温度以获得更稳定的结果
             stream=False
         )
         
@@ -210,10 +316,8 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
     try:
         # 第一步：使用DeepSeek判断哪些部分可以压缩
         system_prompt = '''你是一个prompt分析专家。请分析以下prompt，将其分为两部分：
-
 1. 可压缩部分：可以简化、缩写或删除的部分
 2. 不可压缩部分：必须保持原样的部分（如输出格式、关键指令等）
-
 请按以下格式输出：
 ===可压缩部分===
 [这里放可以压缩的内容]
@@ -222,8 +326,7 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
 [这里放不能压缩的内容]
 
 注意：
-- 输出格式部分（如"输出格式，非json：{...}"）必须放在不可压缩部分
-- 比较关键的指令通常放在不可压缩部分，不太关键的可以压缩
+- 输出格式部分（如"输出格式：{...}"）必须放在不可压缩部分
 - 角色描述、技能描述、例子等可以放在可压缩部分
 - 确保两部分的内容完整覆盖原prompt'''
 
@@ -278,11 +381,8 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
         max_chars = 512  # 每段最大字符数（确保不超过512个token）
         if len(compressible_part) > max_chars:
             print(f'警告：可压缩部分过长（{len(compressible_part)}字符），将分段压缩')
-            # 分段压缩
-            segments = []
-            for i in range(0, len(compressible_part), max_chars):
-                segment = compressible_part[i:i + max_chars]
-                segments.append(segment)
+            # 智能分段，在单词边界处截断
+            segments = smart_split_text(compressible_part, max_chars)
             print(f'将分为{len(segments)}段进行压缩')
         else:
             segments = [compressible_part]
@@ -353,11 +453,8 @@ def compress_with_llmlingua_fallback(prompt_text, target_tokens=500):
         max_chars = 512  # 每段最大字符数（确保不超过512个token）
         if len(prompt_text) > max_chars:
             print(f'警告：prompt过长（{len(prompt_text)}字符），将分段压缩')
-            # 分段压缩
-            segments = []
-            for i in range(0, len(prompt_text), max_chars):
-                segment = prompt_text[i:i + max_chars]
-                segments.append(segment)
+            # 智能分段，在单词边界处截断
+            segments = smart_split_text(prompt_text, max_chars)
             print(f'将分为{len(segments)}段进行压缩')
         else:
             segments = [prompt_text]
