@@ -54,136 +54,7 @@ def clean_compressed_text(text):
     # 移除空行
     text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
     
-    # 消除中文字之间的空格
-    # 匹配中文字符之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 消除中文字符与标点符号之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+([，。！？；：""''（）【】])', r'\1\2', text)
-    text = re.sub(r'([，。！？；：""''（）【】])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 更全面的中文字符空格清理
-    # 清理中文字符与数字之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+(\d)', r'\1\2', text)
-    text = re.sub(r'(\d)\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 清理中文字符与英文字母之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+([a-zA-Z])', r'\1\2', text)
-    text = re.sub(r'([a-zA-Z])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 清理中文字符与特殊符号之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+([#@$%^&*+=<>])', r'\1\2', text)
-    text = re.sub(r'([#@$%^&*+=<>])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 清理中文字符与括号之间的空格
-    text = re.sub(r'([\u4e00-\u9fff])\s+([\(\)\[\]\{\}])', r'\1\2', text)
-    text = re.sub(r'([\(\)\[\]\{\}])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
-    # 多次应用，确保所有中文字符间的空格都被清理
-    for _ in range(3):
-        text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
     return text
-
-def smart_split_text(text, max_chars):
-    """
-    智能分段文本，在单词边界处截断，避免将单词分割
-    
-    Args:
-        text (str): 要分段的文本
-        max_chars (int): 每段最大字符数
-    
-    Returns:
-        list: 分段后的文本列表
-    """
-    if len(text) <= max_chars:
-        return [text]
-    
-    segments = []
-    start = 0
-    
-    while start < len(text):
-        # 计算当前段的结束位置
-        end = min(start + max_chars, len(text))
-        
-        # 如果这是最后一段，直接截取
-        if end == len(text):
-            segments.append(text[start:end])
-            break
-        
-        # 在最大长度范围内寻找最佳截断点
-        # 优先寻找句子结束符
-        sentence_endings = ['。', '！', '？', '.', '!', '?', '\n\n']
-        best_break = start + max_chars
-        
-        for ending in sentence_endings:
-            pos = text.rfind(ending, start, end)
-            if pos > start and pos < end:
-                best_break = pos + len(ending)
-                break
-        
-        # 如果没找到句子结束符，寻找空格或标点符号
-        if best_break == start + max_chars:
-            # 寻找空格
-            space_pos = text.rfind(' ', start, end)
-            if space_pos > start:
-                best_break = space_pos + 1
-            else:
-                # 寻找其他分隔符
-                separators = ['，', '；', '：', ',', ';', ':', '、']
-                for sep in separators:
-                    pos = text.rfind(sep, start, end)
-                    if pos > start and pos < end:
-                        best_break = pos + len(sep)
-                        break
-        
-        # 如果还是没找到合适的分隔点，就在最大长度处截断
-        if best_break == start + max_chars:
-            best_break = end
-        
-        # 添加当前段
-        segment = text[start:best_break].strip()
-        if segment:  # 确保段不为空
-            segments.append(segment)
-        
-        start = best_break
-    
-    return segments
-
-# ========= 动态选择 LLMLingua 模型（短/长）与阈值 =========
-# 超过该字符数则优先使用 LongLLMLingua（整段压缩，不再分段）
-LONG_INPUT_THRESHOLD_CHARS = int(os.getenv('LONG_LINGUA_THRESHOLD_CHARS', '1000'))
-
-# 允许通过环境变量自定义短/长模型名称
-# 示例：
-#   export LLMLINGUA_MODEL_SHORT="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"
-#   export LLMLINGUA_MODEL_LONG="<LongLLMLingua 的长上下文检查点>"
-DEFAULT_SHORT_MODEL = "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"
-
-def create_prompt_compressor(use_long: bool) -> PromptCompressor:
-    """
-    根据 use_long 选择短/长上下文模型构造 PromptCompressor。
-    - 优先读取环境变量：LLMLINGUA_MODEL_LONG / LLMLINGUA_MODEL_SHORT
-    - 未配置长模型而触发 use_long 时，回退到短模型并给出提示
-    """
-    long_model_from_env = os.getenv('LLMLINGUA_MODEL_LONG', '').strip()
-    short_model_from_env = os.getenv('LLMLINGUA_MODEL_SHORT', '').strip()
-
-    if use_long and long_model_from_env:
-        model_name = long_model_from_env
-        print(f"使用LongLLMLingua模式，模型：{model_name}")
-    else:
-        model_name = short_model_from_env or DEFAULT_SHORT_MODEL
-        if use_long:
-            print(f"使用LongLLMLingua模式，模型：{model_name}")
-        else:
-            print(f"使用LLMLingua-2模式，模型：{model_name}")
-
-    return PromptCompressor(
-        model_name=model_name,
-        use_llmlingua2=True,
-        device_map="cpu"
-    )
 
 # 读取配置文件
 CONFIG_PATH = Path(__file__).parent / 'config.json'
@@ -269,7 +140,7 @@ def optimize_with_deepseek(prompt_text, api_key):
     Returns:
         str: 优化后的prompt文本
     """
-    # DeepSeek system prompt - 将「非关键部分」翻译为更短英文、关键片段保持原样
+    # DeepSeek system prompt - 更明确的指令
     system_prompt = '''你是一名专业的 System Prompt 压缩与翻译专家。
 目标：在不改变语义与可执行性的前提下，将输入的中文 System Prompt 中「非关键部分」翻译为更短、更直接的英文，以降低token数；同时严格保留「关键部分」原样（语言、标点、结构均不可变）。
 
@@ -298,8 +169,7 @@ def optimize_with_deepseek(prompt_text, api_key):
 - 直接输出处理后的 System Prompt 全文；
 - 不添加解释、标题或前后缀；
 - 确保结果可直接作为模型的 System Prompt 使用；
-- 若某句无法安全压缩或翻译，会影响输出格式或判定边界，则保持该句原样中文不变。
-'''
+- 若某句无法安全压缩或翻译，会影响输出格式或判定边界，则保持该句原样中文不变。'''
 
     # 使用OpenAI SDK调用DeepSeek API
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/")
@@ -312,7 +182,7 @@ def optimize_with_deepseek(prompt_text, api_key):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text}
             ],
-            temperature=0.3,  # 降低温度以获得更稳定的结果
+            temperature=1.0,  # 降低温度以获得更稳定的结果
             stream=False
         )
         
@@ -343,8 +213,10 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
     try:
         # 第一步：使用DeepSeek判断哪些部分可以压缩
         system_prompt = '''你是一个prompt分析专家。请分析以下prompt，将其分为两部分：
+
 1. 可压缩部分：可以简化、缩写或删除的部分
 2. 不可压缩部分：必须保持原样的部分（如输出格式、关键指令等）
+
 请按以下格式输出：
 ===可压缩部分===
 [这里放可以压缩的内容]
@@ -353,7 +225,8 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
 [这里放不能压缩的内容]
 
 注意：
-- 输出格式部分（如"输出格式：{...}"）必须放在不可压缩部分
+- 输出格式部分（如"输出格式，非json：{...}"）必须放在不可压缩部分
+- 比较关键的指令通常放在不可压缩部分，不太关键的可以压缩
 - 角色描述、技能描述、例子等可以放在可压缩部分
 - 确保两部分的内容完整覆盖原prompt'''
 
@@ -395,92 +268,57 @@ def compress_with_llmlingua(prompt_text, api_key, target_tokens=500):
         print(f'\n可压缩部分长度: {len(compressible_part)} 字符')
         print(f'不可压缩部分长度: {len(non_compressible_part)} 字符')
         
-        # 第三步：使用LLMLingua压缩可压缩部分
-        use_long = len(compressible_part) >= LONG_INPUT_THRESHOLD_CHARS
-        if use_long:
-            print('\n正在使用LongLLMLingua压缩可压缩部分...')
+        # 第三步：使用LLMLingua-2压缩可压缩部分
+        print('\n正在使用LLMLingua-2压缩可压缩部分...')
+        
+        llm_lingua = PromptCompressor(
+            model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+            use_llmlingua2=True,
+            device_map="cpu"
+        )
+        
+        # 处理可压缩部分，如果过长则分段压缩
+        max_chars = 512  # 每段最大字符数（确保不超过512个token）
+        if len(compressible_part) > max_chars:
+            print(f'警告：可压缩部分过长（{len(compressible_part)}字符），将分段压缩')
+            # 分段压缩
+            segments = []
+            for i in range(0, len(compressible_part), max_chars):
+                segment = compressible_part[i:i + max_chars]
+                segments.append(segment)
+            print(f'将分为{len(segments)}段进行压缩')
         else:
-            print('\n正在使用LLMLingua-2压缩可压缩部分...')
-
-        llm_lingua = create_prompt_compressor(use_long)
-
-        if use_long:
-            # 长文本：直接整段压缩（采用 LongLLMLingua 官方参数）
+            segments = [compressible_part]
+        
+        # 分别压缩每一段
+        compressed_segments = []
+        for i, segment in enumerate(segments):
+            print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
             try:
                 result = llm_lingua.compress_prompt(
-                    compressible_part,
+                    segment,
                     rate=0.8,
-                    force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）'],
-                    condition_in_question="after_condition",
-                    reorder_context="sort",
-                    dynamic_context_compression_ratio=0.3,
-                    condition_compare=True,
-                    context_budget="+100",
-                    rank_method="longllmlingua",
+                    force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）']
                 )
-                compressed_part = result.get('compressed_prompt', '') if isinstance(result, dict) else str(result)
-                compressed_part = clean_compressed_text(compressed_part)
-                print(f'整段压缩完成，从{len(compressible_part)}字符压缩到{len(compressed_part)}字符')
+                
+                # 处理压缩结果
+                if isinstance(result, dict):
+                    compressed_segment = result.get('compressed_prompt', '')
+                else:
+                    compressed_segment = str(result)
+                
+                # 清理压缩后的多余空格
+                compressed_segment = clean_compressed_text(compressed_segment)
+                compressed_segments.append(compressed_segment)
+                print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
+                
             except Exception as compress_error:
-                print(f"整段压缩失败: {compress_error}")
-                # 回退到分段
-                print('回退：启用分段压缩。')
-                max_chars = 512
-                segments = smart_split_text(compressible_part, max_chars)
-                compressed_segments = []
-                for i, segment in enumerate(segments):
-                    print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
-                    try:
-                        result = llm_lingua.compress_prompt(
-                            segment,
-                            rate=0.8,
-                            force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）'],
-                            condition_in_question="after_condition",
-                            reorder_context="sort",
-                            dynamic_context_compression_ratio=0.3,
-                            condition_compare=True,
-                            context_budget="+100",
-                            rank_method="longllmlingua",
-                        )
-                        compressed_segment = result.get('compressed_prompt', '') if isinstance(result, dict) else str(result)
-                        compressed_segment = clean_compressed_text(compressed_segment)
-                        compressed_segments.append(compressed_segment)
-                        print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
-                    except Exception as e2:
-                        print(f"第{i+1}段压缩失败: {e2}")
-                        compressed_segments.append(segment)
-                compressed_part = '\n\n'.join(compressed_segments)
-        else:
-            # 短文本：保留原有的分段逻辑（小段更稳）
-            max_chars = 512
-            if len(compressible_part) > max_chars:
-                print(f'警告：可压缩部分过长（{len(compressible_part)}字符），将分段压缩')
-                segments = smart_split_text(compressible_part, max_chars)
-                print(f'将分为{len(segments)}段进行压缩')
-            else:
-                segments = [compressible_part]
-
-            compressed_segments = []
-            for i, segment in enumerate(segments):
-                print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
-                try:
-                    result = llm_lingua.compress_prompt(
-                        segment,
-                        rate=0.8,
-                        force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）']
-                    )
-                    if isinstance(result, dict):
-                        compressed_segment = result.get('compressed_prompt', '')
-                    else:
-                        compressed_segment = str(result)
-                    compressed_segment = clean_compressed_text(compressed_segment)
-                    compressed_segments.append(compressed_segment)
-                    print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
-                except Exception as compress_error:
-                    print(f"第{i+1}段压缩失败: {compress_error}")
-                    compressed_segments.append(segment)
-
-            compressed_part = '\n\n'.join(compressed_segments)
+                print(f"第{i+1}段压缩失败: {compress_error}")
+                # 如果压缩失败，保留原段
+                compressed_segments.append(segment)
+        
+        # 合并所有压缩后的段落
+        compressed_part = '\n\n'.join(compressed_segments)
         
         # 第四步：拼接压缩后的可压缩部分和不可压缩部分
         final_prompt = compressed_part + '\n\n' + non_compressible_part
@@ -509,83 +347,52 @@ def compress_with_llmlingua_fallback(prompt_text, target_tokens=500):
     print('\n使用回退的普通LLMLingua压缩...')
     
     try:
-        use_long = len(prompt_text) >= LONG_INPUT_THRESHOLD_CHARS
-        llm_lingua = create_prompt_compressor(use_long)
-
-        if use_long:
-            print('长文本：尝试整段压缩...')
+        llm_lingua = PromptCompressor(
+            model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+            use_llmlingua2=True,
+            device_map="cpu"
+        )
+        
+        max_chars = 512  # 每段最大字符数（确保不超过512个token）
+        if len(prompt_text) > max_chars:
+            print(f'警告：prompt过长（{len(prompt_text)}字符），将分段压缩')
+            # 分段压缩
+            segments = []
+            for i in range(0, len(prompt_text), max_chars):
+                segment = prompt_text[i:i + max_chars]
+                segments.append(segment)
+            print(f'将分为{len(segments)}段进行压缩')
+        else:
+            segments = [prompt_text]
+        
+        # 分别压缩每一段
+        compressed_segments = []
+        for i, segment in enumerate(segments):
+            print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
             try:
                 result = llm_lingua.compress_prompt(
-                    prompt_text,
+                    segment,
                     rate=0.8,
-                    force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）'],
-                    condition_in_question="after_condition",
-                    reorder_context="sort",
-                    dynamic_context_compression_ratio=0.3,
-                    condition_compare=True,
-                    context_budget="+100",
-                    rank_method="longllmlingua",
+                    force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）']
                 )
-                final_prompt = result.get('compressed_prompt', '') if isinstance(result, dict) else str(result)
-                final_prompt = clean_compressed_text(final_prompt)
-                print(f'整段压缩完成，从{len(prompt_text)}字符压缩到{len(final_prompt)}字符')
-            except Exception as e:
-                print(f'整段压缩失败：{e}，回退到分段压缩。')
-                max_chars = 512
-                segments = smart_split_text(prompt_text, max_chars)
-                compressed_segments = []
-                for i, segment in enumerate(segments):
-                    print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
-                    try:
-                        result = llm_lingua.compress_prompt(
-                            segment,
-                            rate=0.8,
-                            force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）'],
-                            condition_in_question="after_condition",
-                            reorder_context="sort",
-                            dynamic_context_compression_ratio=0.3,
-                            condition_compare=True,
-                            context_budget="+100",
-                            rank_method="longllmlingua",
-                        )
-                        compressed_segment = result.get('compressed_prompt', '') if isinstance(result, dict) else str(result)
-                        compressed_segment = clean_compressed_text(compressed_segment)
-                        compressed_segments.append(compressed_segment)
-                        print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
-                    except Exception as e2:
-                        print(f"第{i+1}段压缩失败: {e2}")
-                        compressed_segments.append(segment)
-                final_prompt = '\n\n'.join(compressed_segments)
-        else:
-            max_chars = 512
-            if len(prompt_text) > max_chars:
-                print(f'警告：prompt过长（{len(prompt_text)}字符），将分段压缩')
-                segments = smart_split_text(prompt_text, max_chars)
-                print(f'将分为{len(segments)}段进行压缩')
-            else:
-                segments = [prompt_text]
-
-            compressed_segments = []
-            for i, segment in enumerate(segments):
-                print(f'正在压缩第{i+1}段（{len(segment)}字符）...')
-                try:
-                    result = llm_lingua.compress_prompt(
-                        segment,
-                        rate=0.8,
-                        force_tokens=['\n', '?', '：', '。', '，', ' ', '，', '；', '！', '（', '）']
-                    )
-                    if isinstance(result, dict):
-                        compressed_segment = result.get('compressed_prompt', '')
-                    else:
-                        compressed_segment = str(result)
-                    compressed_segment = clean_compressed_text(compressed_segment)
-                    compressed_segments.append(compressed_segment)
-                    print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
-                except Exception as compress_error:
-                    print(f"第{i+1}段压缩失败: {compress_error}")
-                    compressed_segments.append(segment)
-
-            final_prompt = '\n\n'.join(compressed_segments)
+                
+                if isinstance(result, dict):
+                    compressed_segment = result.get('compressed_prompt', '')
+                else:
+                    compressed_segment = str(result)
+                
+                # 清理压缩后的多余空格
+                compressed_segment = clean_compressed_text(compressed_segment)
+                compressed_segments.append(compressed_segment)
+                print(f'第{i+1}段压缩完成，从{len(segment)}字符压缩到{len(compressed_segment)}字符')
+                
+            except Exception as compress_error:
+                print(f"第{i+1}段压缩失败: {compress_error}")
+                # 如果压缩失败，保留原段
+                compressed_segments.append(segment)
+        
+        # 合并所有压缩后的段落
+        final_prompt = '\n\n'.join(compressed_segments)
         
         ratio = len(final_prompt) / len(prompt_text) if len(prompt_text) > 0 else 0
         
