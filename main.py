@@ -36,63 +36,118 @@ def clean_compressed_text(text):
         str: 清理后的文本
     """
     import re
-    
+
     # 将多个连续空格替换为单个空格
     text = re.sub(r'\s+', ' ', text)
-    
+
     # 清理行首行尾空格
     text = text.strip()
 
-    # 去除中文字符之间的空格
-    while True:
-        new_text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
-        if new_text == text:
-            break
-        text = new_text
-
-    # 去除中文与标点之间的空格（中文+空格+标点，标点+空格+中文）
-    # 中文与标点
-    text = re.sub(r'([\u4e00-\u9fff])\s+([，。！？；：“”‘’、,.!?;:])', r'\1\2', text)
-    # 标点与中文
-    text = re.sub(r'([，。！？；：“”‘’、,.!?;:])\s+([\u4e00-\u9fff])', r'\1\2', text)
-    
     # 清理段落间的多余空行（保留最多两个连续换行）
     text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-    
+
     # 清理行首行尾的空格
     lines = text.split('\n')
     cleaned_lines = [line.strip() for line in lines]
     text = '\n'.join(cleaned_lines)
-    
+
     # 移除空行
     text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+
+    # 消除中文字之间的空格
+    # 匹配中文字符之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 消除中文字符与标点符号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([，。！？；：""''（）【】])', r'\1\2', text)
+    text = re.sub(r'([，。！？；：""''（）【】])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 更全面的中文字符空格清理
+    # 清理中文字符与数字之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+(\d)', r'\1\2', text)
+    text = re.sub(r'(\d)\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与英文字母之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([a-zA-Z])', r'\1\2', text)
+    text = re.sub(r'([a-zA-Z])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与特殊符号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([#@$%^&*+=<>])', r'\1\2', text)
+    text = re.sub(r'([#@$%^&*+=<>])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 清理中文字符与括号之间的空格
+    text = re.sub(r'([\u4e00-\u9fff])\s+([\(\)\[\]\{\}])', r'\1\2', text)
+    text = re.sub(r'([\(\)\[\]\{\}])\s+([\u4e00-\u9fff])', r'\1\2', text)
+    
+    # 多次应用，确保所有中文字符间的空格都被清理
+    for _ in range(3):
+        text = re.sub(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])', r'\1\2', text)
     
     return text
 
 def split_text_by_punctuation(text, max_chars=512):
     """
-    按标点优先分段，保证每段不超过max_chars
+    智能分段文本，在单词边界处截断，避免将单词分割
+    
+    Args:
+        text (str): 要分段的文本
+        max_chars (int): 每段最大字符数
+    
+    Returns:
+        list: 分段后的文本列表
     """
-    import re
-    # 以句号、问号、感叹号、中英文分号等为分隔符
-    sentences = re.split(r'([。！？；;.!?])', text)
-    # 合并分隔符
-    merged = []
-    for i in range(0, len(sentences)-1, 2):
-        merged.append(sentences[i] + sentences[i+1])
-    if len(sentences) % 2 == 1:
-        merged.append(sentences[-1])
-    # 按max_chars拼接
+    if len(text) <= max_chars:
+        return [text]
+    
     segments = []
-    current = ''
-    for sent in merged:
-        if len(current) + len(sent) > max_chars and current:
-            segments.append(current)
-            current = sent
-        else:
-            current += sent
-    if current:
-        segments.append(current)
+    start = 0
+    
+    while start < len(text):
+        # 计算当前段的结束位置
+        end = min(start + max_chars, len(text))
+        
+        # 如果这是最后一段，直接截取
+        if end == len(text):
+            segments.append(text[start:end])
+            break
+        
+        # 在最大长度范围内寻找最佳截断点
+        # 优先寻找句子结束符
+        sentence_endings = ['。', '！', '？', '.', '!', '?', '\n\n']
+        best_break = start + max_chars
+        
+        for ending in sentence_endings:
+            pos = text.rfind(ending, start, end)
+            if pos > start and pos < end:
+                best_break = pos + len(ending)
+                break
+        
+        # 如果没找到句子结束符，寻找空格或标点符号
+        if best_break == start + max_chars:
+            # 寻找空格
+            space_pos = text.rfind(' ', start, end)
+            if space_pos > start:
+                best_break = space_pos + 1
+            else:
+                # 寻找其他分隔符
+                separators = ['，', '；', '：', ',', ';', ':', '、']
+                for sep in separators:
+                    pos = text.rfind(sep, start, end)
+                    if pos > start and pos < end:
+                        best_break = pos + len(sep)
+                        break
+        
+        # 如果还是没找到合适的分隔点，就在最大长度处截断
+        if best_break == start + max_chars:
+            best_break = end
+        
+        # 添加当前段
+        segment = text[start:best_break].strip()
+        if segment:  # 确保段不为空
+            segments.append(segment)
+        
+        start = best_break
+    
     return segments
 
 # 读取配置文件
